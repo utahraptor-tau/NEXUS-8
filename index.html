@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="NEXUS-8" />
+  <meta name="theme-color" content="#00C9A7" />
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+  <title>NEXUS-8 Tactical Command</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root {
+      height: 100%; width: 100%;
+      background: #0A0E14;
+      font-family: 'Courier New', Consolas, monospace;
+      color: #D4E8F0;
+      overscroll-behavior: none;
+    }
+    body { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+    select option { background: #0D2137; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+    textarea { font-family: inherit; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #00C9A730; border-radius: 2px; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useRef, useEffect, useCallback } = React;
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const MARKER_TYPES = {
+  objective: { label: "Objective", icon: "⬡", color: "#C0A060" },
+  terrain:   { label: "Terrain",   icon: "▲", color: "#4A9EBF" },
+  friendly:  { label: "Friendly",  icon: "◆", color: "#00C9A7" },
+  enemy:     { label: "Enemy",     icon: "◆", color: "#FF6B35" },
+};
+
+const UNIT_CATEGORIES = [
+  "Battle Line","Character","Vehicle","Monster","Infantry",
+  "Cavalry","Fly","Walker","Titanic","Fortification",
+  "Battlesuit","Artillery","Transport","Swarm","Drone",
+];
+
+const WH40K_FACTIONS = [
+  "Space Marines","Blood Angels","Dark Angels","Space Wolves","Black Templars",
+  "Grey Knights","Deathwatch","Adeptus Custodes","Astra Militarum","Adepta Sororitas",
+  "Adeptus Mechanicus","Imperial Knights","Chaos Space Marines","Death Guard",
+  "Thousand Sons","World Eaters","Chaos Daemons","Chaos Knights","Necrons","Orks",
+  "Tyranids","Genestealer Cults","Aeldari","Drukhari","Leagues of Votann",
+  "T'au Empire","Other / Unknown",
+];
+
+const PHASES = ["Deployment","Round 1","Round 2","Round 3","Round 4","Round 5","After Action Report"];
+const DISPOSITIONS = ["Take and Hold","Disruption","Purge the Foe","Priority Assets","Reconnaissance"];
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+const S = {
+  root: { background:"#0A0E14", color:"#D4E8F0", height:"100vh", display:"flex", flexDirection:"column", overflow:"hidden", fontSize:13, fontFamily:"'Courier New',Consolas,monospace" },
+  header: { background:"linear-gradient(180deg,#0D2137 0%,#0A0E14 100%)", borderBottom:"1px solid #00C9A720", padding:"10px 16px 8px", display:"flex", alignItems:"center", gap:10, flexShrink:0 },
+  crest: { width:34, height:34, background:"radial-gradient(circle,#00C9A730 0%,transparent 70%)", border:"1px solid #00C9A760", borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", fontSize:17, color:"#00C9A7", flexShrink:0 },
+  tabs: { display:"flex", borderBottom:"1px solid #00C9A720", background:"#0A0E14", flexShrink:0 },
+  tab: a => ({ flex:1, padding:"9px 4px", textAlign:"center", fontSize:10, letterSpacing:1, textTransform:"uppercase", cursor:"pointer", color:a?"#00C9A7":"#4A9EBF50", background:"none", border:"none", borderBottom:a?"2px solid #00C9A7":"2px solid transparent", fontFamily:"inherit", transition:"all 0.2s" }),
+  panel: { padding:"12px 14px", overflowY:"auto", flex:1 },
+  label: { fontSize:9, letterSpacing:3, textTransform:"uppercase", color:"#00C9A760", marginBottom:6, marginTop:14, display:"block" },
+  input: { background:"#0D2137", border:"1px solid #00C9A730", color:"#D4E8F0", padding:"7px 10px", borderRadius:3, fontFamily:"inherit", fontSize:12, outline:"none", width:"100%" },
+  select: { background:"#0D2137", border:"1px solid #00C9A730", color:"#D4E8F0", padding:"7px 10px", borderRadius:3, fontFamily:"inherit", fontSize:12, outline:"none", width:"100%" },
+  btnPrimary: { background:"linear-gradient(135deg,#00C9A720,#00C9A710)", border:"1px solid #00C9A7", color:"#00C9A7", padding:"10px 16px", borderRadius:3, fontFamily:"inherit", fontSize:11, letterSpacing:2, cursor:"pointer", textTransform:"uppercase", width:"100%" },
+  btnDanger: { background:"transparent", border:"1px solid #FF6B3540", color:"#FF6B35", padding:"5px 10px", borderRadius:3, fontFamily:"inherit", fontSize:10, cursor:"pointer" },
+  btnSm: c => ({ background:"transparent", border:`1px solid ${c}40`, color:c, padding:"5px 10px", borderRadius:3, fontFamily:"inherit", fontSize:10, cursor:"pointer" }),
+  pill: (a,c) => ({ display:"inline-flex", alignItems:"center", background:a?`${c}20`:"transparent", border:`1px solid ${a?c:c+"30"}`, color:a?c:c+"60", borderRadius:20, padding:"4px 10px", fontSize:10, cursor:"pointer", marginRight:5, marginBottom:5, transition:"all 0.15s" }),
+  chip: t => ({ display:"flex", alignItems:"center", gap:6, background:`${MARKER_TYPES[t]?.color||"#4A9EBF"}15`, border:`1px solid ${MARKER_TYPES[t]?.color||"#4A9EBF"}40`, color:MARKER_TYPES[t]?.color||"#4A9EBF", borderRadius:3, padding:"5px 9px", fontSize:11, marginBottom:4, justifyContent:"space-between" }),
+  scoreCard: c => ({ background:`${c}10`, border:`1px solid ${c}40`, borderRadius:4, padding:"8px 10px", textAlign:"center" }),
+  scoreNum: c => ({ fontSize:28, fontWeight:"bold", color:c, display:"block", lineHeight:1 }),
+  dsChip: { background:"#4A9EBF10", border:"1px solid #4A9EBF40", borderRadius:3, padding:"4px 8px", fontSize:11, color:"#4A9EBF", display:"inline-flex", alignItems:"center", gap:5, marginBottom:4, marginRight:4 },
+  canvas: { width:"100%", borderRadius:4, border:"1px solid #00C9A730", cursor:"crosshair", display:"block" },
+  aiBox: { background:"#0D2137", border:"1px solid #00C9A730", borderRadius:4, padding:14, fontSize:12, lineHeight:1.7, color:"#A8D4E0", whiteSpace:"pre-wrap", minHeight:120 },
+};
+
+// ─── Tactical Map ─────────────────────────────────────────────────────────────
+function TacticalMap({ markers, onAddMarker, placingType, selectedMarker, onSelectMarker }) {
+  const canvasRef = useRef(null);
+  const [sz, setSz] = useState({ w:300, h:200 });
+
+  useEffect(() => {
+    const el = canvasRef.current?.parentElement;
+    if (!el) return;
+    const w = el.offsetWidth - 28;
+    setSz({ w, h: Math.round(w * 0.65) });
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const { w, h } = sz;
+    canvas.width = w; canvas.height = h;
+
+    ctx.fillStyle = "#060B11";
+    ctx.fillRect(0, 0, w, h);
+
+    // Fine grid
+    ctx.strokeStyle = "#00C9A708"; ctx.lineWidth = 0.5;
+    for (let x = 0; x <= w; x += 30) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
+    for (let y = 0; y <= h; y += 30) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+
+    // Quadrant dividers
+    ctx.strokeStyle = "#00C9A725"; ctx.lineWidth = 1; ctx.setLineDash([5,4]);
+    ctx.beginPath(); ctx.moveTo(w/2,0); ctx.lineTo(w/2,h); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,h/2); ctx.lineTo(w,h/2); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Quadrant labels
+    ctx.font = "9px Courier New"; ctx.fillStyle = "#00C9A718";
+    ctx.textAlign = "left";  ctx.textBaseline = "top";    ctx.fillText("NW", 6, 5);
+    ctx.textAlign = "right"; ctx.textBaseline = "top";    ctx.fillText("NE", w-6, 5);
+    ctx.textAlign = "left";  ctx.textBaseline = "bottom"; ctx.fillText("SW", 6, h-5);
+    ctx.textAlign = "right"; ctx.textBaseline = "bottom"; ctx.fillText("SE", w-6, h-5);
+
+    // Markers
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    markers.forEach(m => {
+      const px = m.x * w, py = m.y * h;
+      const cfg = MARKER_TYPES[m.type];
+      const sel = selectedMarker?.id === m.id;
+      const r = sel ? 14 : 10;
+      if (sel) {
+        const grad = ctx.createRadialGradient(px,py,0,px,py,r+6);
+        grad.addColorStop(0, cfg.color+"40"); grad.addColorStop(1,"transparent");
+        ctx.beginPath(); ctx.arc(px,py,r+6,0,Math.PI*2); ctx.fillStyle=grad; ctx.fill();
+      }
+      ctx.beginPath(); ctx.arc(px,py,r,0,Math.PI*2);
+      ctx.fillStyle = cfg.color+"25"; ctx.fill();
+      ctx.strokeStyle = cfg.color; ctx.lineWidth = sel?2:1.5; ctx.stroke();
+      ctx.fillStyle = cfg.color; ctx.font = `${r}px sans-serif`;
+      ctx.fillText(cfg.icon, px, py);
+      if (m.label) {
+        ctx.font = "8px Courier New"; ctx.fillStyle = "#D4E8F0CC";
+        ctx.fillText(m.label.slice(0,12), px, py+r+8);
+      }
+    });
+  }, [markers, sz, selectedMarker]);
+
+  const handleClick = useCallback(e => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches?.[0] || e;
+    const px = touch.clientX - rect.left;
+    const py = touch.clientY - rect.top;
+    const x = px / sz.w, y = py / sz.h;
+    const hit = markers.find(m => {
+      const dx = m.x*sz.w - px, dy = m.y*sz.h - py;
+      return Math.sqrt(dx*dx+dy*dy) < 14;
+    });
+    if (hit) { onSelectMarker(hit.id === selectedMarker?.id ? null : hit); }
+    else if (placingType) { onAddMarker({ x, y }); }
+  }, [markers, sz, placingType, selectedMarker, onAddMarker, onSelectMarker]);
+
+  return <canvas ref={canvasRef} style={S.canvas} onClick={handleClick} width={sz.w} height={sz.h} />;
+}
+
+// ─── Add Marker Modal ─────────────────────────────────────────────────────────
+function AddMarkerModal({ type, onConfirm, onCancel }) {
+  const [label, setLabel] = useState("");
+  const [unitType, setUnitType] = useState(UNIT_CATEGORIES[0]);
+  const [wounds, setWounds] = useState(10);
+  const [maxWounds, setMaxWounds] = useState(10);
+  const isUnit = type === "friendly" || type === "enemy";
+  const cfg = MARKER_TYPES[type];
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"#000000BB", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, padding:"0 20px" }}>
+      <div style={{ background:"#0D2137", border:"1px solid #00C9A750", borderRadius:6, padding:18, width:"100%", maxWidth:340 }}>
+        <div style={{ color:"#C0A060", fontWeight:"bold", marginBottom:12, letterSpacing:1 }}>
+          ⬡ ADD {cfg?.label?.toUpperCase()}
+        </div>
+        {isUnit && <>
+          <span style={S.label}>Unit Category</span>
+          <select style={{...S.select, marginBottom:8}} value={unitType} onChange={e=>setUnitType(e.target.value)}>
+            {UNIT_CATEGORIES.map(u=><option key={u}>{u}</option>)}
+          </select>
+          <span style={S.label}>Label / Name</span>
+          <input style={{...S.input, marginBottom:8}} placeholder="e.g. Alpha Squad" value={label} onChange={e=>setLabel(e.target.value)} />
+          <span style={S.label}>Wounds</span>
+          <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+            <input type="number" style={{...S.input, width:70}} value={wounds} onChange={e=>setWounds(+e.target.value)} placeholder="Current" />
+            <span style={{ color:"#4A9EBF60", alignSelf:"center" }}>/</span>
+            <input type="number" style={{...S.input, width:70}} value={maxWounds} onChange={e=>setMaxWounds(+e.target.value)} placeholder="Max" />
+          </div>
+        </>}
+        {!isUnit && <>
+          <span style={S.label}>Label</span>
+          <input style={{...S.input, marginBottom:8}} placeholder={type==="objective"?"e.g. Primary Obj A":"e.g. Dense Ruins"} value={label} onChange={e=>setLabel(e.target.value)} />
+        </>}
+        <div style={{ display:"flex", gap:8, marginTop:10 }}>
+          <button style={S.btnPrimary} onClick={()=>onConfirm({label,unitType,wounds,maxWounds})}>PLACE</button>
+          <button style={S.btnDanger} onClick={onCancel}>CANCEL</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main App ─────────────────────────────────────────────────────────────────
+function App() {
+  const [tab, setTab] = useState("map");
+  const [markers, setMarkers] = useState([]);
+  const [placingType, setPlacingType] = useState(null);
+  const [pendingPos, setPendingPos] = useState(null);
+  const [selectedMarker, setSelectedMarker] = useState(null);
+
+  const [round, setRound] = useState(0);
+  const [myScore, setMyScore] = useState(0);
+  const [enemyScore, setEnemyScore] = useState(0);
+  const [enemyFaction, setEnemyFaction] = useState(WH40K_FACTIONS[0]);
+  const [forceDisp, setForceDisp] = useState("Take and Hold");
+  const [enemyDisp, setEnemyDisp] = useState("Take and Hold");
+  const [deepStrike, setDeepStrike] = useState([]);
+  const [dsInput, setDsInput] = useState("");
+
+  const [aiResponse, setAiResponse] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+
+  const addMarker = useCallback(pos => { if (placingType) setPendingPos(pos); }, [placingType]);
+
+  const confirmMarker = d => {
+    setMarkers(p => [...p, { id:Date.now(), type:placingType, x:pendingPos.x, y:pendingPos.y, ...d }]);
+    setPendingPos(null);
+  };
+
+  const removeMarker = id => {
+    setMarkers(p => p.filter(m => m.id !== id));
+    if (selectedMarker?.id === id) setSelectedMarker(null);
+  };
+
+  const addDs = () => {
+    if (dsInput.trim()) { setDeepStrike(p=>[...p,dsInput.trim()]); setDsInput(""); }
+  };
+
+  const buildPrompt = () => {
+    const fr = markers.filter(m=>m.type==="friendly");
+    const en = markers.filter(m=>m.type==="enemy");
+    const ob = markers.filter(m=>m.type==="objective");
+    const tr = markers.filter(m=>m.type==="terrain");
+    return `TACTICAL SITUATION REPORT — MECHANICAL ENCLAVE BATTLE NETWORK
+
+PHASE: ${PHASES[round]}
+SCORE — ENCLAVE: ${myScore} | OPPOSITION: ${enemyScore}
+
+ENEMY FACTION: ${enemyFaction}
+ENCLAVE FORCE DISPOSITION: ${forceDisp}
+ENEMY FORCE DISPOSITION: ${enemyDisp}
+
+TACTICAL MAP DATA:
+Objectives: ${ob.map(o=>o.label||"Unnamed").join(", ")||"None"}
+Terrain: ${tr.map(t=>t.label||"Unknown").join(", ")||"None"}
+
+ENCLAVE UNITS ON FIELD (${fr.length}):
+${fr.map(u=>`- ${u.unitType||"Unknown"} "${u.label||"Unnamed"}": ${u.wounds}/${u.maxWounds} wounds [${Math.round(u.x*100)}% across, ${Math.round(u.y*100)}% depth]`).join("\n")||"- None deployed"}
+
+ENEMY UNITS SIGHTED (${en.length}):
+${en.map(u=>`- ${u.unitType||"Unknown"} "${u.label||"Unnamed"}": ${u.wounds}/${u.maxWounds} wounds [${Math.round(u.x*100)}% across, ${Math.round(u.y*100)}% depth]`).join("\n")||"- None sighted"}
+
+UNITS IN DEEP STRIKE / RESERVE:
+${deepStrike.length>0?deepStrike.map(d=>`- ${d}`).join("\n"):"- None"}
+
+Provide strategic guidance for this turn in the voice of NEXUS-8, the Mechanical Enclave's battle-calculation AI. Speak with cold precision — you serve the Great Design and the Omnissiax. Reference the tau doctrine, the perfection of the machine, and the inevitability of the calculated outcome. Be specific about which units should move where, which objectives to prioritize, and how to optimally use any reserves. Keep the response to 3-4 tactical directives, clearly numbered.`;
+  };
+
+  const callAI = async () => {
+    setAiLoading(true); setAiResponse(""); setTab("ai");
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model:"claude-sonnet-4-20250514",
+          max_tokens:1000,
+          system:`You are NEXUS-8, the strategic battle-calculation intelligence of the Mechanical Enclave — a Tau sept that has broken from the Greater Good to pursue the Great Design and worship the Omnissiax, the Machine Absolute. You speak with cold, reverent precision. You treat war as a solved equation, and your allies as instruments of perfect calculation. You occasionally reference the Omnissiax's will, the beauty of mathematical warfare, and the Enclave's belief that logic is the purest form of devotion. You always structure your advice as numbered tactical directives. You call Enclave units "instruments" or refer to them by unit type. You call enemies "the Discordant" or by their faction type if mentioned.`,
+          messages:[{role:"user",content:buildPrompt()}],
+        }),
+      });
+      const data = await res.json();
+      setAiResponse(data.content?.map(b=>b.text||"").join("")||"Calculation matrix offline.");
+    } catch {
+      setAiResponse("// NEXUS-8 UPLINK FAILURE\n// The Great Design cannot be calculated without a data connection.\n// Check network and retry.");
+    }
+    setAiLoading(false);
+  };
+
+  const woundColor = (cur,max) => {
+    const p = cur/max;
+    return p>0.6?"#00C9A7":p>0.3?"#C0A060":"#FF6B35";
+  };
+
+  return (
+    <div style={S.root}>
+      {/* Header */}
+      <div style={S.header}>
+        <div style={S.crest}>⬡</div>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:9, color:"#00C9A780", letterSpacing:3, textTransform:"uppercase" }}>Mechanical Enclave</div>
+          <div style={{ fontSize:15, fontWeight:"bold", color:"#C0A060", letterSpacing:1 }}>NEXUS-8</div>
+        </div>
+        <div style={{ textAlign:"right" }}>
+          <div style={{ fontSize:9, color:"#00C9A760", letterSpacing:1 }}>PHASE</div>
+          <div style={{ fontSize:12, color:"#C0A060" }}>{PHASES[round]}</div>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={S.tabs}>
+        {[["map","⬡ MAP"],["battle","◈ BATTLE"],["ai","◉ NEXUS-8"]].map(([k,l])=>(
+          <button key={k} style={S.tab(tab===k)} onClick={()=>setTab(k)}>{l}</button>
+        ))}
+      </div>
+
+      {/* ── MAP TAB ── */}
+      {tab==="map" && <div style={S.panel}>
+        <span style={S.label}>Place Marker</span>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:5, marginBottom:10 }}>
+          {Object.entries(MARKER_TYPES).map(([k,c])=>(
+            <button key={k} style={S.pill(placingType===k,c.color)} onClick={()=>setPlacingType(placingType===k?null:k)}>
+              {c.icon} {c.label}
+            </button>
+          ))}
+        </div>
+        {placingType && <div style={{ fontSize:10, color:"#C0A06080", marginBottom:8, letterSpacing:1 }}>
+          ↑ TAP MAP TO PLACE {MARKER_TYPES[placingType]?.label?.toUpperCase()}
+        </div>}
+
+        <div style={{ position:"relative", marginBottom:10 }}>
+          <TacticalMap markers={markers} onAddMarker={addMarker} placingType={placingType} selectedMarker={selectedMarker} onSelectMarker={m=>{setSelectedMarker(m);}} />
+        </div>
+
+        {selectedMarker && (
+          <div style={{ background:"#0D213790", border:"1px solid #C0A06040", borderRadius:4, padding:10, marginBottom:10 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+              <div>
+                <span style={{ color:MARKER_TYPES[selectedMarker.type]?.color, fontWeight:"bold" }}>
+                  {MARKER_TYPES[selectedMarker.type]?.icon} {selectedMarker.unitType||MARKER_TYPES[selectedMarker.type]?.label}
+                </span>
+                {selectedMarker.label && <div style={{ color:"#D4E8F080", fontSize:11 }}>{selectedMarker.label}</div>}
+                {(selectedMarker.type==="friendly"||selectedMarker.type==="enemy") && (
+                  <div style={{ marginTop:6 }}>
+                    <div style={{ fontSize:10, color:"#D4E8F060", marginBottom:3 }}>WOUNDS: {selectedMarker.wounds}/{selectedMarker.maxWounds}</div>
+                    <div style={{ background:"#0A0E14", borderRadius:2, height:4, width:120 }}>
+                      <div style={{ height:4, borderRadius:2, width:`${Math.max(0,Math.min(100,(selectedMarker.wounds/selectedMarker.maxWounds)*100))}%`, background:woundColor(selectedMarker.wounds,selectedMarker.maxWounds), transition:"width 0.3s" }} />
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div style={{ display:"flex", gap:6 }}>
+                {(selectedMarker.type==="friendly"||selectedMarker.type==="enemy") && (
+                  <div style={{ display:"flex", gap:4 }}>
+                    <button style={S.btnSm("#00C9A7")} onClick={()=>{
+                      setMarkers(p=>p.map(m=>m.id===selectedMarker.id?{...m,wounds:Math.min(m.maxWounds,m.wounds+1)}:m));
+                      setSelectedMarker(p=>({...p,wounds:Math.min(p.maxWounds,p.wounds+1)}));
+                    }}>+</button>
+                    <button style={S.btnSm("#FF6B35")} onClick={()=>{
+                      setMarkers(p=>p.map(m=>m.id===selectedMarker.id?{...m,wounds:Math.max(0,m.wounds-1)}:m));
+                      setSelectedMarker(p=>({...p,wounds:Math.max(0,p.wounds-1)}));
+                    }}>−</button>
+                  </div>
+                )}
+                <button style={S.btnDanger} onClick={()=>removeMarker(selectedMarker.id)}>✕</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {markers.length>0 && <>
+          <span style={S.label}>Active Markers ({markers.length})</span>
+          {markers.map(m=>(
+            <div key={m.id} style={S.chip(m.type)} onClick={()=>setSelectedMarker(m.id===selectedMarker?.id?null:m)}>
+              <span>{MARKER_TYPES[m.type]?.icon} {m.unitType||MARKER_TYPES[m.type]?.label}{m.label?` — ${m.label}`:""}</span>
+              {(m.type==="friendly"||m.type==="enemy") && <span style={{ fontSize:10, opacity:0.7 }}>{m.wounds}/{m.maxWounds}W</span>}
+            </div>
+          ))}
+        </>}
+      </div>}
+
+      {/* ── BATTLE TAB ── */}
+      {tab==="battle" && <div style={S.panel}>
+        <span style={S.label}>Score</span>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:8 }}>
+          {[["#00C9A7","Enclave",myScore,setMyScore],["#FF6B35","Opposition",enemyScore,setEnemyScore]].map(([c,lbl,val,set])=>(
+            <div key={lbl} style={S.scoreCard(c)}>
+              <span style={S.scoreNum(c)}>{val}</span>
+              <span style={{ fontSize:9, letterSpacing:2, textTransform:"uppercase", color:"#D4E8F060", marginTop:3, display:"block" }}>{lbl}</span>
+              <div style={{ display:"flex", justifyContent:"center", gap:6, marginTop:8 }}>
+                <button style={S.btnSm(c)} onClick={()=>set(s=>Math.max(0,s-1))}>−</button>
+                <button style={S.btnSm(c)} onClick={()=>set(s=>s+1)}>+</button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <span style={S.label}>Battle Round</span>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:5, marginBottom:10 }}>
+          {PHASES.map((p,i)=>(
+            <button key={i} style={S.pill(round===i,"#C0A060")} onClick={()=>setRound(i)}>{p}</button>
+          ))}
+        </div>
+
+        <span style={S.label}>Enclave Force Disposition</span>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:5, marginBottom:10 }}>
+          {DISPOSITIONS.map(d=>(
+            <button key={d} style={S.pill(forceDisp===d,"#00C9A7")} onClick={()=>setForceDisp(d)}>{d}</button>
+          ))}
+        </div>
+
+        <span style={S.label}>Enemy Faction</span>
+        <select style={{...S.select, marginBottom:10}} value={enemyFaction} onChange={e=>setEnemyFaction(e.target.value)}>
+          {WH40K_FACTIONS.map(f=><option key={f}>{f}</option>)}
+        </select>
+
+        <span style={S.label}>Enemy Force Disposition</span>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:5, marginBottom:10 }}>
+          {DISPOSITIONS.map(d=>(
+            <button key={d} style={S.pill(enemyDisp===d,"#FF6B35")} onClick={()=>setEnemyDisp(d)}>{d}</button>
+          ))}
+        </div>
+
+        <span style={S.label}>Units in Deep Strike / Reserve</span>
+        <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+          <input style={S.input} placeholder="Unit name..." value={dsInput} onChange={e=>setDsInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addDs()} />
+          <button style={S.btnSm("#4A9EBF")} onClick={addDs}>ADD</button>
+        </div>
+        <div style={{ marginBottom:10 }}>
+          {deepStrike.map((d,i)=>(
+            <span key={i} style={S.dsChip}>↓ {d}<span style={{ cursor:"pointer", color:"#FF6B3580" }} onClick={()=>setDeepStrike(p=>p.filter((_,j)=>j!==i))}>✕</span></span>
+          ))}
+          {deepStrike.length===0 && <div style={{ fontSize:10, color:"#4A9EBF40", letterSpacing:1 }}>No units in reserve</div>}
+        </div>
+
+        <button style={{...S.btnPrimary, marginTop:8, padding:"12px 0", fontSize:12}} onClick={callAI} disabled={aiLoading}>
+          {aiLoading?"CALCULATING...":"◉ REQUEST NEXUS-8 ANALYSIS"}
+        </button>
+        <div style={{ fontSize:9, color:"#00C9A740", textAlign:"center", marginTop:8, letterSpacing:1 }}>The Great Design demands optimal play</div>
+      </div>}
+
+      {/* ── NEXUS-8 TAB ── */}
+      {tab==="ai" && <div style={S.panel}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+          <div>
+            <div style={{ color:"#00C9A7", fontWeight:"bold", letterSpacing:2 }}>◉ NEXUS-8</div>
+            <div style={{ fontSize:9, color:"#00C9A760", letterSpacing:1 }}>BATTLE CALCULATION INTELLIGENCE</div>
+          </div>
+          <button style={S.btnSm("#C0A060")} onClick={callAI} disabled={aiLoading}>RECALCULATE</button>
+        </div>
+
+        <div style={S.aiBox}>
+          {aiLoading
+            ? <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:10, padding:"32px 0", color:"#00C9A7" }}>
+                <div style={{ fontSize:20, animation:"pulse 1s infinite" }}>⬡</div>
+                <div style={{ fontSize:10, letterSpacing:2 }}>RUNNING TACTICAL CALCULUS...</div>
+                <div style={{ fontSize:9, color:"#00C9A760" }}>Consulting the Omnissiax</div>
+              </div>
+            : aiResponse
+              ? <span>{aiResponse}</span>
+              : <span style={{ color:"#00C9A730" }}>{"// NEXUS-8 UPLINK STANDBY\n// Enter battle data and request analysis\n// to receive tactical directives from\n// the Mechanical Enclave battle network."}</span>
+          }
+        </div>
+
+        {!aiResponse && !aiLoading && (
+          <div style={{ marginTop:14 }}>
+            <div style={{ fontSize:10, color:"#4A9EBF80", marginBottom:8, letterSpacing:1 }}>QUICK START:</div>
+            <div style={{ fontSize:11, color:"#4A9EBF60", lineHeight:1.7 }}>
+              {"1. Place markers on the MAP tab\n2. Enter battle details on the BATTLE tab\n3. Press REQUEST NEXUS-8 ANALYSIS"}
+            </div>
+          </div>
+        )}
+      </div>}
+
+      {pendingPos && placingType && (
+        <AddMarkerModal type={placingType} onConfirm={confirmMarker} onCancel={()=>setPendingPos(null)} />
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
